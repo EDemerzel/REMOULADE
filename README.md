@@ -1,6 +1,6 @@
 # REMOULADE Email Client
 
-Simple IMAP Email Client Inspired By MH
+Simple Email Client For IMAP Inspired By MH
 
 ## Overview
 
