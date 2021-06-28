@@ -95,17 +95,6 @@ static int file_exists(char *path)
     return 0;
 }
 
-static int is_file_symlink(char *path)
-{
-    struct stat statbuf;
-    if (!lstat(path, &statbuf)) {
-        if (S_ISLNK(statbuf.st_mode)) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static FILE *open_file_for_writing(char *path)
 {
     int fd = open(path, O_WRONLY|O_CREAT|O_EXCL, 0600);
@@ -229,21 +218,18 @@ static int is_number_in_range(char *numberstr, char *rangestr)
 static int is_filename_uid(char *str)
 {
     char *p = str;
-    if (*p == '.') {
-        p++;
-        for(;;) {
-            if (!*p) {
-                if (p - str >= 2) {
-                    return 1;
-                }
-                return 0;
-            }
-            if ((*p >= '0') && (*p <= '9')) {
-                p++;
-                continue;
+    for(;;) {
+        if (!*p) {
+            if (p > str) {
+                return 1;
             }
             return 0;
         }
+        if ((*p >= '0') && (*p <= '9')) {
+            p++;
+            continue;
+        }
+        return 0;
     }
     return 0;
 }
@@ -262,38 +248,12 @@ static void unlink_files_in_range(char *range)
         char *p = ent->d_name;
 //debuglog("dirent '%s' %d", p, is_filename_uid(p));
         if (is_filename_uid(p)) {
-            char *q = p + 1;
-//debuglog("q '%s'", q);
-            if (is_number_in_range(q, range)) {
-debuglog("'%s' in range '%s'", q, range);
+            if (is_number_in_range(p, range)) {
+debuglog("'%s' in range '%s'", p, range);
                 if (unlink(p) != 0) {
                     die("Unable to unlink '%s'", p);
                 }
 debuglog("unlinked '%s'", p);
-            }
-        }
-    }
-    closedir(dir);
-}
-
-static void unlink_message_symlinks()
-{
-    DIR *dir = opendir(".");
-    if (!dir) {
-        die("Unable to open current directory");
-    }
-    for(;;) {
-        struct dirent *ent = readdir(dir);
-        if (!ent) {
-            break;
-        }
-        char *p = ent->d_name;
-        if (str_validchars_endchar(p, DIGITCHARS, 0)) {
-            if (!is_file_symlink(p)) {
-                die("File '%s' is not a symlink", p);
-            }
-            if (unlink(p) != 0) {
-                die("Unable to unlink '%s'", p);
             }
         }
     }
@@ -448,17 +408,14 @@ debuglog("Error, '}\\r\\n' not found");
 
 debuglog("uid '%s' fetch_size %d", uid_p, fetch_size);
         {
-            char *q = uid_p-1;
-            *q = '.';
-
-            if (file_exists(q)) {
-                die("File '%s' already exists", q);
+            if (file_exists(uid_p)) {
+                die("File '%s' already exists", uid_p);
             }
 
-            int emailfd = open(q, O_WRONLY|O_CREAT|O_TRUNC, 0600);
+            int emailfd = open(uid_p, O_WRONLY|O_CREAT|O_TRUNC, 0600);
             FILE *emailfp = fdopen(emailfd, "w");
             if (!emailfp) {
-                die("Unable to create file '%s'", q);
+                die("Unable to create file '%s'", uid_p);
             }
 
             int fetch_bytes_read = 0;
@@ -527,11 +484,9 @@ debuglog("invalid fetch line '%s'", _buf);
         }
         *q = 0;
 debuglog("fetch '%s'", p);
-        char *filename = p-1;
-        *filename = '.';
-debuglog("Checking file '%s'", filename);
-        if (file_exists(filename)) {
-debuglog("File '%s' exists, skipping fetch", filename);
+debuglog("Checking file '%s'", p);
+        if (file_exists(p)) {
+debuglog("File '%s' exists, skipping fetch", p);
         } else {
 debuglog("Performing fetch '%s'", p);
             do_fetch(p);
@@ -863,7 +818,6 @@ debuglog("Error, uid_endp not found");
     if (!same_highestmodseq) {
         process_qresync_vanished();
         process_qresync_highestmodseq();
-        unlink_message_symlinks();
     }
 
     unlink(".qresync");
@@ -976,11 +930,14 @@ static void remoulade_init()
     }
     chomp_string(passwordbuf);
     printf("\n");
-    printf("Enter IMAP mailbox: ");
+    printf("Enter IMAP mailbox (leave empty for 'inbox'): ");
     if (!fgets(mailboxbuf, BUFSIZE, stdin)) {
         die("Unable to read line");
     }
     chomp_string(mailboxbuf);
+    if (!mailboxbuf[0]) {
+        sprintf(mailboxbuf, "inbox");
+    }
 
     write_string_to_new_file(usernamebuf, ".username");
     write_string_to_new_file(passwordbuf, ".password");
