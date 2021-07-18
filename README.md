@@ -2,6 +2,13 @@
 
 Simple Email Client For IMAP Inspired By MH
 
+## Screenshots
+
+![List Screenshot](Screenshots/remoulade-screenshot-list.png)
+
+![Message Screenshot](Screenshots/remoulade-screenshot-message.png)
+
+
 ## Overview
 
 Download an IMAP mailbox to a local directory.
