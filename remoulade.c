@@ -220,18 +220,42 @@ static int is_filename_uid(char *str)
     char *p = str;
     for(;;) {
         if (!*p) {
-            if (p > str) {
-                return 1;
-            }
             return 0;
         }
         if ((*p >= '0') && (*p <= '9')) {
             p++;
             continue;
         }
+        if (*p == '.') {
+            if (p > str) {
+                if (!strcmp(p+1, "eml")) {
+                    return 1;
+                }
+            }
+        }
         return 0;
     }
     return 0;
+}
+
+static char *move_string_backwards_and_add_suffix(char *src, char *suffix)
+{
+    int suffixlen = strlen(suffix);
+    char *p = src;
+    char *dst = src-suffixlen;
+    char *q = dst;
+    while (*p) {
+        *q = *p;
+        q++;
+        p++;
+    }
+    p = suffix;
+    while (*p) {
+        *q = *p;
+        q++;
+        p++;
+    }
+    return dst;
 }
 
 static void unlink_files_in_range(char *range)
@@ -407,15 +431,16 @@ debuglog("Error, '}\\r\\n' not found");
         }
 
 debuglog("uid '%s' fetch_size %d", uid_p, fetch_size);
+        char *uidfile_p = move_string_backwards_and_add_suffix(uid_p, ".eml");
         {
-            if (file_exists(uid_p)) {
-                die("File '%s' already exists", uid_p);
+            if (file_exists(uidfile_p)) {
+                die("File '%s' already exists", uidfile_p);
             }
 
-            int emailfd = open(uid_p, O_WRONLY|O_CREAT|O_TRUNC, 0600);
+            int emailfd = open(uidfile_p, O_WRONLY|O_CREAT|O_TRUNC, 0600);
             FILE *emailfp = fdopen(emailfd, "w");
             if (!emailfp) {
-                die("Unable to create file '%s'", uid_p);
+                die("Unable to create file '%s'", uidfile_p);
             }
 
             int fetch_bytes_read = 0;
@@ -425,7 +450,7 @@ debuglog("success");
                     break;
                 }
                 if (fetch_bytes_read >= fetch_size) {
-                    die("Read too many bytes");
+                    die("Read too many bytes for file %s fetch_bytes_read %d fetch_size %d", uidfile_p, fetch_bytes_read, fetch_size);
                 }
 
                 if (!fgets(_buf, BUFSIZE, _infp)) {
@@ -464,9 +489,9 @@ debuglog("success");
 
 static void process_qresync_fetch()
 {
-    FILE *fp = fopen(".qresync", "r");
+    FILE *fp = fopen("qresync.tmp", "r");
     if (!fp) {
-debuglog("unable to open .qresync");
+debuglog("unable to open qresync.tmp");
         return;
     }
     for(;;) {
@@ -484,9 +509,14 @@ debuglog("invalid fetch line '%s'", _buf);
         }
         *q = 0;
 debuglog("fetch '%s'", p);
-debuglog("Checking file '%s'", p);
-        if (file_exists(p)) {
-debuglog("File '%s' exists, skipping fetch", p);
+        if (strlen(p) > 251) {
+            die("Buffer overflow fetch uid '%s' too long", p);
+        }
+        char path[256];
+        sprintf(path, "%s.eml", p);
+debuglog("Checking file '%s'", path);
+        if (file_exists(path)) {
+debuglog("File '%s' exists, skipping fetch", path);
         } else {
 debuglog("Performing fetch '%s'", p);
             do_fetch(p);
@@ -496,9 +526,9 @@ debuglog("Performing fetch '%s'", p);
 
 static void process_qresync_vanished()
 {
-    FILE *fp = fopen(".qresync", "r");
+    FILE *fp = fopen("qresync.tmp", "r");
     if (!fp) {
-debuglog("unable to open .qresync");
+debuglog("unable to open qresync.tmp");
         return;
     }
     for(;;) {
@@ -522,9 +552,9 @@ debuglog("vanished '%s'", p);
 
 static void process_qresync_highestmodseq()
 {
-    FILE *fp = fopen(".qresync", "r");
+    FILE *fp = fopen("qresync.tmp", "r");
     if (!fp) {
-debuglog("unable to open .qresync");
+debuglog("unable to open qresync.tmp");
         return;
     }
     for(;;) {
@@ -542,8 +572,8 @@ debuglog("invalid highestmodseq line '%s'", _buf);
         }
         *q = 0;
 debuglog("highestmodseq '%s'", p);
-        unlink(".highestmodseq");
-        write_string_to_new_file(p, ".highestmodseq");
+        unlink("highestmodseq.dat");
+        write_string_to_new_file(p, "highestmodseq.dat");
         return;
     }
 }
@@ -590,13 +620,31 @@ debuglog("Error, unable to open directory '%s'", path);
         if (!strcmp(ent->d_name, "..")) {
             continue;
         }
-        if (!strcmp(ent->d_name, ".username")) {
+        if (!strcmp(ent->d_name, "username.cfg")) {
             continue;
         }
-        if (!strcmp(ent->d_name, ".password")) {
+        if (!strcmp(ent->d_name, "password.cfg")) {
             continue;
         }
-        if (!strcmp(ent->d_name, ".mailbox")) {
+        if (!strcmp(ent->d_name, "mailbox.cfg")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "initialDownload.sh")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "update.sh")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "idle.sh")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "list.sh")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "view.sh")) {
+            continue;
+        }
+        if (!strcmp(ent->d_name, "log.txt")) {
             continue;
         }
         return 0;
@@ -608,15 +656,15 @@ debuglog("Error, unable to open directory '%s'", path);
 static void remoulade_download()
 {
     if (!is_directory_empty_except_for_init(".")) {
-        die("Current directory is not empty (excluding .username .password .mailbox)");
+        die("Current directory is not empty (excluding username.cfg password.cfg mailbox.cfg initialDownload.sh update.sh idle.sh list.sh view.sh log.txt)");
     }
 
     char usernamebuf[BUFSIZE];
     char passwordbuf[BUFSIZE];
     char mailboxbuf[BUFSIZE];
-    read_first_line_from_file(".username", usernamebuf);
-    read_first_line_from_file(".password", passwordbuf);
-    read_first_line_from_file(".mailbox", mailboxbuf);
+    read_first_line_from_file("username.cfg", usernamebuf);
+    read_first_line_from_file("password.cfg", passwordbuf);
+    read_first_line_from_file("mailbox.cfg", mailboxbuf);
 
     _infp = stdin;
     _outfp = stdout;
@@ -657,7 +705,7 @@ debuglog("num_exists %d", num_exists);
             if (q) {
                 *q = 0;
 debuglog("uidvalidity '%s'", p);
-                write_string_to_new_file(p, ".uidvalidity");
+                write_string_to_new_file(p, "uidvalidity.dat");
                 continue;
             }
         }
@@ -667,7 +715,7 @@ debuglog("uidvalidity '%s'", p);
             if (q) {
                 *q = 0;
 debuglog("highestmodseq '%s'", p);
-                write_string_to_new_file(p, ".highestmodseq");
+                write_string_to_new_file(p, "highestmodseq.dat");
                 continue;
             }
         }
@@ -682,8 +730,8 @@ debuglog("highestmodseq '%s'", p);
 
 static void remoulade_update()
 {
-    if (file_exists(".qresync")) {
-        die(".qresync already exists");
+    if (file_exists("qresync.tmp")) {
+        die("qresync.tmp already exists");
     }
 
     int same_highestmodseq = 0;
@@ -693,22 +741,22 @@ static void remoulade_update()
     char mailboxbuf[BUFSIZE];
     char uidvaliditybuf[BUFSIZE];
     char highestmodseqbuf[BUFSIZE];
-    read_first_line_from_file(".username", usernamebuf);
-    read_first_line_from_file(".password", passwordbuf);
-    read_first_line_from_file(".mailbox", mailboxbuf);
+    read_first_line_from_file("username.cfg", usernamebuf);
+    read_first_line_from_file("password.cfg", passwordbuf);
+    read_first_line_from_file("mailbox.cfg", mailboxbuf);
     {
-        read_first_line_from_file(".uidvalidity", uidvaliditybuf);
+        read_first_line_from_file("uidvalidity.dat", uidvaliditybuf);
         char *q = str_validchars_endchar(uidvaliditybuf, DIGITCHARS, 0);
         if (!q) {
-            die("Invalid .uidvalidity '%s'", uidvaliditybuf);
+            die("Invalid uidvalidity.dat '%s'", uidvaliditybuf);
         }
         *q = 0;
     }
     {
-        read_first_line_from_file(".highestmodseq", highestmodseqbuf);
+        read_first_line_from_file("highestmodseq.dat", highestmodseqbuf);
         char *q = str_validchars_endchar(highestmodseqbuf, DIGITCHARS, 0);
         if (!q) {
-            die("Invalid .highestmodseq '%s'", highestmodseqbuf);
+            die("Invalid highestmodseq.dat '%s'", highestmodseqbuf);
         }
         *q = 0;
     }
@@ -722,9 +770,9 @@ static void remoulade_update()
 
     do_enable_qresync();
 
-    FILE *qresyncfp = open_file_for_writing(".qresync");
+    FILE *qresyncfp = open_file_for_writing("qresync.tmp");
     if (!qresyncfp) {
-        die("Unable to open .qresync");
+        die("Unable to open qresync.tmp");
     }
 
     write_string("select select %s (qresync (%s %s))\r\n", mailboxbuf, uidvaliditybuf, highestmodseqbuf);
@@ -755,7 +803,7 @@ debuglog("num_exists %d", num_exists);
             if (q) {
                 *q = 0;
                 if (strcmp(p, uidvaliditybuf) != 0) {
-                    die("UIDVALIDITY '%s' does not match .uidvalidity '%s', the mailbox may have changed", p, uidvaliditybuf);
+                    die("UIDVALIDITY '%s' does not match uidvalidity.dat '%s', the mailbox may have changed", p, uidvaliditybuf);
                 }
                 fprintf(qresyncfp, "uidvalidity %s\n", p);
                 continue;
@@ -820,7 +868,7 @@ debuglog("Error, uid_endp not found");
         process_qresync_highestmodseq();
     }
 
-    unlink(".qresync");
+    unlink("qresync.tmp");
 
     exit(0);
 }
@@ -830,9 +878,9 @@ static void remoulade_idle()
     char usernamebuf[BUFSIZE];
     char passwordbuf[BUFSIZE];
     char mailboxbuf[BUFSIZE];
-    read_first_line_from_file(".username", usernamebuf);
-    read_first_line_from_file(".password", passwordbuf);
-    read_first_line_from_file(".mailbox", mailboxbuf);
+    read_first_line_from_file("username.cfg", usernamebuf);
+    read_first_line_from_file("password.cfg", passwordbuf);
+    read_first_line_from_file("mailbox.cfg", mailboxbuf);
     _infp = stdin;
     _outfp = stdout;
 
@@ -939,9 +987,47 @@ static void remoulade_init()
         sprintf(mailboxbuf, "inbox");
     }
 
-    write_string_to_new_file(usernamebuf, ".username");
-    write_string_to_new_file(passwordbuf, ".password");
-    write_string_to_new_file(mailboxbuf, ".mailbox");
+    char imapserverbuf[BUFSIZE/2];
+    printf("\n");
+    printf("Enter IMAP server hostname: ");
+    if (!fgets(imapserverbuf, BUFSIZE/2, stdin)) {
+        die("Unable to read line");
+    }
+    chomp_string(imapserverbuf);
+    if (!imapserverbuf[0]) {
+        sprintf(imapserverbuf, "localhost");
+    }
+
+    write_string_to_new_file(usernamebuf, "username.cfg");
+    write_string_to_new_file(passwordbuf, "password.cfg");
+    write_string_to_new_file(mailboxbuf, "mailbox.cfg");
+
+    char downloadbuf[BUFSIZE];
+    sprintf(downloadbuf,
+"socat openssl:%s:993 system:'remoulade download'\n"
+"#socat openssl:%s:993,verify=0 system:'remoulade download'\n",
+imapserverbuf, imapserverbuf);
+    write_string_to_new_file(downloadbuf, "initialDownload.sh");
+
+    char updatebuf[BUFSIZE];
+    sprintf(updatebuf,
+"socat openssl:%s:993 system:'remoulade update'\n"
+"#socat openssl:%s:993,verify=0 system:'remoulade update'\n",
+imapserverbuf, imapserverbuf);
+    write_string_to_new_file(updatebuf, "update.sh");
+
+    char idlebuf[BUFSIZE];
+    sprintf(idlebuf,
+"socat openssl:%s:993 system:'remoulade idle'\n"
+"#socat openssl:%s:993,verify=0 system:'remoulade idle'\n",
+imapserverbuf, imapserverbuf);
+    write_string_to_new_file(idlebuf, "idle.sh");
+
+    write_string_to_new_file("ls -v *.eml | tac | remoulade-list\n", "list.sh");
+
+    write_string_to_new_file("sh list.sh | hotdog nav 'blocksFromStandardInput|asMailInterface'\n", "view.sh");
+
+    write_string_to_new_file("Use 'log.txt' as a log file\n", "log.txt");
 
     exit(0);
 }
